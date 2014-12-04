@@ -43,80 +43,6 @@ struct lenovo_drvdata_cptkbd {
 
 #define map_key_clear(c) hid_map_usage_clear(hi, usage, bit, max, EV_KEY, (c))
 
-static __u8 *lenovo_report_fixup_cptkbd(struct hid_device *hdev, __u8 *rdesc,
-	unsigned int *rsize)
-{
-	int i = 0;
-
-	/* Find broken report descriptor for USB keyboard */
-	if (*rsize > 0xab &&
-		rdesc[0x92] == 0x06 && rdesc[0x93] == 0xa1 &&
-		rdesc[0x94] == 0xff && /* Usage Page */
-		rdesc[0x97] == 0xa1 && rdesc[0x98] == 0x01 && /* Collection */
-		rdesc[0x99] == 0x85 && rdesc[0x9a] == 0x16 && /* Report ID */
-		rdesc[0xab] == 0xc0)
-		i = 0x92;
-
-	/* Find broken report descriptor for Bluetooth keyboard */
-	if (*rsize >= 0x60 &&
-		rdesc[0x12c] == 0x06 && rdesc[0x12d] == 0x10 &&
-		rdesc[0x12e] == 0xff && /* Usage Page */
-		rdesc[0x131] == 0xa1 && rdesc[0x132] == 0x01 && /* Collection */
-		rdesc[0x133] == 0x85 && rdesc[0x134] == 0x16 && /* Report ID */
-		rdesc[0x145] == 0xc0)
-		i = 0x12c;
-
-	/* Splice a proper description of wheel emulation events into usage */
-	if (i > 0) {
-		hid_info(hdev, "fixing up wheel descriptor at 0x%x..\n", i);
-		/* Usage Page (Custom) */
-		rdesc[i++] = 0x06; rdesc[i++] = 0x01;
-		rdesc[i++] = 0xfe;
-		/* Collection (Application) */
-		rdesc[i++] = 0xa1; rdesc[i++] = 0x01;
-
-		/* Report ID (22) */
-		rdesc[i++] = 0x85; rdesc[i++] = 0x16;
-		/* Report Size (8) */
-		rdesc[i++] = 0x75; rdesc[i++] = 0x08;
-		/* Report Count (1) */
-		rdesc[i++] = 0x95; rdesc[i++] = 0x01;
-
-		/* Logical Minimum (-127) */
-		rdesc[i++] = 0x15; rdesc[i++] = 0x81;
-		/* Logical Maximum (127) */
-		rdesc[i++] = 0x25; rdesc[i++] = 0x7f;
-
-		/* Usage (06) REL_HWHEEL */
-		rdesc[i++] = 0x09; rdesc[i++] = 0x06;
-		/* Input (Data, Variable, Relative) */
-		rdesc[i++] = 0x81; rdesc[i++] = 0x06;
-
-		/* Usage (08) REL_WHEEL */
-		rdesc[i++] = 0x09; rdesc[i++] = 0x08;
-		/* Input (Data, Variable, Relative) */
-		rdesc[i++] = 0x81; rdesc[i++] = 0x06;
-
-		/* Padding to keep collection size */
-		rdesc[i++] = 0x05; rdesc[i++] = 0x01;
-
-		hid_info(hdev, "..ending at 0x%x\n", i);
-	}
-	return rdesc;
-}
-
-static __u8 *lenovo_report_fixup(struct hid_device *hdev, __u8 *rdesc,
-	unsigned int *rsize)
-{
-	switch (hdev->product) {
-	case USB_DEVICE_ID_LENOVO_CUSBKBD:
-	case USB_DEVICE_ID_LENOVO_CBTKBD:
-		return lenovo_report_fixup_cptkbd(hdev, rdesc, rsize);
-	default:
-		return rdesc;
-	}
-}
-
 static int lenovo_input_mapping_tpkbd(struct hid_device *hdev,
 		struct hid_input *hi, struct hid_field *field,
 		struct hid_usage *usage, unsigned long **bit, int *max)
@@ -182,10 +108,22 @@ static int lenovo_input_mapping_cptkbd(struct hid_device *hdev,
 			(usage->hid & HID_USAGE) == 0x238)
 		return -1;
 
-	/* Use the wheel mappings we spliced in report_fixup instead */
-	if ((usage->hid & HID_USAGE_PAGE) == 0xfe010000) {
-		hid_map_usage(hi, usage, bit, max, EV_REL, usage->hid & 0xf);
-		return 1;
+	/* Map wheel emulation reports */
+	if ((usage->hid & HID_USAGE_PAGE) == 0xff100000) {
+		field->flags |= HID_MAIN_ITEM_RELATIVE | HID_MAIN_ITEM_VARIABLE;
+		field->logical_minimum = -127;
+		field->logical_maximum = 127;
+
+		switch (usage->hid & HID_USAGE) {
+		case 0x0000:
+			hid_map_usage(hi, usage, bit, max, EV_REL, 0x06);
+			return 1;
+		case 0x0001:
+			hid_map_usage(hi, usage, bit, max, EV_REL, 0x08);
+			return 1;
+		default:
+			return -1;
+		}
 	}
 
 	return 0;
@@ -835,7 +773,6 @@ MODULE_DEVICE_TABLE(hid, lenovo_devices);
 static struct hid_driver lenovo_driver = {
 	.name = "lenovo",
 	.id_table = lenovo_devices,
-	.report_fixup = lenovo_report_fixup,
 	.input_mapping = lenovo_input_mapping,
 	.probe = lenovo_probe,
 	.remove = lenovo_remove,

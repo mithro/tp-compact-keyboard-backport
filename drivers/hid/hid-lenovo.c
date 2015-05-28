@@ -282,13 +282,11 @@ static int lenovo_raw_event(struct hid_device *hdev,
 	if (unlikely(size == 3
 			&& data[0] == 0x16
 			&& data[1] == 0x00
-			&& data[2] != 0x00))
-		data[2] = (data[2] * -10); /* Invert Y axis */
+			&& data[2] != 0x00)) data[2] = data[2] * -10;
 	if (unlikely(size == 3
 			&& data[0] == 0x16
 			&& data[1] != 0x00
-			&& data[2] == 0x00))
-		data[1] = (data[1] * 10);
+			&& data[2] == 0x00)) data[1] = data[1] * 10;
 
 	/*
 	 * Compact USB keyboard's Fn-F12 report holds down many other keys, and

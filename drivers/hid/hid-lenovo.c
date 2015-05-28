@@ -117,10 +117,10 @@ static int lenovo_input_mapping_cptkbd(struct hid_device *hdev,
 
 		switch (usage->hid & HID_USAGE) {
 		case 0x0000:
-			hid_map_usage(hi, usage, bit, max, EV_REL, 0x06);
+			hid_map_usage_clear(hi, usage, bit, max, EV_REL, REL_X);
 			return 1;
 		case 0x0001:
-			hid_map_usage(hi, usage, bit, max, EV_REL, 0x08);
+			hid_map_usage_clear(hi, usage, bit, max, EV_REL, REL_Y);
 			return 1;
 		default:
 			return -1;
@@ -267,6 +267,29 @@ static const struct attribute_group lenovo_attr_group_cptkbd = {
 static int lenovo_raw_event(struct hid_device *hdev,
 			struct hid_report *report, u8 *data, int size)
 {
+	/* The below only applies for Compact USB/BT keyboards */
+	if (hdev->product != USB_DEVICE_ID_LENOVO_CBTKBD
+		&& hdev->product != USB_DEVICE_ID_LENOVO_CUSBKBD)
+			return 0;
+
+	/*
+	 * The CBTKBD & CUSBKBD wheel emulation doesn't hide the middle-button
+	 * press, which results in spurious pastes. Instead scale the wheel
+	 * events so we approximate the mouse movement required for Xorg's wheel
+	 * emulation to result in the same wheel events as the keyboard produces
+	 * NB: 10 is the default value for EmulateWheelInertia in Xorg
+	 */
+	if (unlikely(size == 3
+			&& data[0] == 0x16
+			&& data[1] == 0x00
+			&& data[2] != 0x00))
+		data[2] = (data[2] * -10); /* Invert Y axis */
+	if (unlikely(size == 3
+			&& data[0] == 0x16
+			&& data[1] != 0x00
+			&& data[2] == 0x00))
+		data[1] = (data[1] * 10);
+
 	/*
 	 * Compact USB keyboard's Fn-F12 report holds down many other keys, and
 	 * its own key is outside the usage page range. Remove extra

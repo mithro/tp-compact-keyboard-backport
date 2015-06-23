@@ -37,6 +37,7 @@ struct lenovo_drvdata_tpkbd {
 };
 
 struct lenovo_drvdata_cptkbd {
+	u8 middlebutton_state; /* 0:Undecided, 1:Scrolling, 2:Middle-button */
 	bool fn_lock;
 	int sensitivity;
 };
@@ -282,6 +283,47 @@ static int lenovo_raw_event(struct hid_device *hdev,
 			&& data[2] == 0x01)) {
 		data[1] = 0x00;
 		data[2] = 0x01;
+	}
+
+	return 0;
+}
+
+static int lenovo_event(struct hid_device *hdev, struct hid_field *field,
+		struct hid_usage *usage, __s32 value)
+{
+	struct lenovo_drvdata_cptkbd *cptkbd_data;
+
+	/* Compact keyboards only beyond this point */
+	if (hdev->product != USB_DEVICE_ID_LENOVO_CUSBKBD &&
+			hdev->product != USB_DEVICE_ID_LENOVO_CBTKBD)
+		return 0;
+
+	cptkbd_data = hid_get_drvdata(hdev);
+
+	/* "wheel" scroll events */
+	if (usage->type == EV_REL && (usage->code == REL_WHEEL ||
+			usage->code == REL_HWHEEL)) {
+		/* Scroll events disable middle-click event */
+		cptkbd_data->middlebutton_state = 1;
+		return 0;
+	}
+
+	/* Middle click events */
+	if (usage->type == EV_KEY && usage->code == BTN_MIDDLE) {
+		if (value == 1) {
+			cptkbd_data->middlebutton_state = 0;
+		} else if (value == 0) {
+			if (cptkbd_data->middlebutton_state == 0) {
+				/* No scrolling inbetween, send middle-click */
+				input_event(field->hidinput->input,
+					EV_KEY, BTN_MIDDLE, 1);
+				input_sync(field->hidinput->input);
+				input_event(field->hidinput->input,
+					EV_KEY, BTN_MIDDLE, 0);
+				input_sync(field->hidinput->input);
+			}
+		}
+		return 1;
 	}
 
 	return 0;
@@ -746,6 +788,16 @@ static void lenovo_remove_tpkbd(struct hid_device *hdev)
 
 static void lenovo_remove_cptkbd(struct hid_device *hdev)
 {
+	int ret;
+
+	/* Revert back to compatibility mode */
+	ret = lenovo_send_cmd_cptkbd(hdev, 0x01, 0x00);
+	if (ret)
+		hid_warn(hdev, "Failed to revert F7/9/11 mode: %d\n", ret);
+	ret = lenovo_send_cmd_cptkbd(hdev, 0x09, 0x00);
+	if (ret)
+		hid_warn(hdev, "Failed to revert middle button: %d\n", ret);
+
 	sysfs_remove_group(&hdev->dev.kobj,
 			&lenovo_attr_group_cptkbd);
 }
@@ -781,6 +833,7 @@ static struct hid_driver lenovo_driver = {
 	.probe = lenovo_probe,
 	.remove = lenovo_remove,
 	.raw_event = lenovo_raw_event,
+	.event = lenovo_event,
 };
 module_hid_driver(lenovo_driver);
 

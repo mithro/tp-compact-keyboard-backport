@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BASE_COMMIT=76c704048f5b1025e5fd21ece5407eff05c68931
+BASE_COMMIT=10a4cbe7003f6d63fdbed9f3cc1d16f78630d57e
 BASH="$BASH --norc --noprofile"
 
 BRANCHES=$(git branch --all | grep 'upstream/tp-' | sed -e's/^..//')

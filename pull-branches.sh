@@ -41,6 +41,8 @@ for B in $BRANCHES; do
 
   if [ $FOUND != 1 ]; then
     echo "No base commit found on $NAME!"
+    git checkout master
+    git branch -d $NAME
     continue
   fi
 

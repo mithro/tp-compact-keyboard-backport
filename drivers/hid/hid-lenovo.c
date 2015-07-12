@@ -1,11 +1,7 @@
 /*
- *  HID driver for Lenovo:
- *  - ThinkPad USB Keyboard with TrackPoint (tpkbd)
- *  - ThinkPad Compact Bluetooth Keyboard with TrackPoint (cptkbd)
- *  - ThinkPad Compact USB Keyboard with TrackPoint (cptkbd)
+ *  HID driver for Lenovo ThinkPad USB Keyboard with TrackPoint
  *
  *  Copyright (c) 2012 Bernhard Seibold
- *  Copyright (c) 2014 Jamie Lentin <jm@lentin.co.uk>
  */
 
 /*
@@ -36,11 +32,6 @@ struct lenovo_drvdata_tpkbd {
 	int press_speed;
 };
 
-struct lenovo_drvdata_cptkbd {
-	bool fn_lock;
-	int sensitivity;
-};
-
 #define map_key_clear(c) hid_map_usage_clear(hi, usage, bit, max, EV_KEY, (c))
 
 static int lenovo_input_mapping_tpkbd(struct hid_device *hdev,
@@ -48,7 +39,7 @@ static int lenovo_input_mapping_tpkbd(struct hid_device *hdev,
 		struct hid_usage *usage, unsigned long **bit, int *max)
 {
 	if (usage->hid == (HID_UP_BUTTON | 0x0010)) {
-		/* This sub-device contains trackpoint, mark it */
+		/* mark the device as pointer */
 		hid_set_drvdata(hdev, (void *)1);
 		map_key_clear(KEY_MICMUTE);
 		return 1;
@@ -56,233 +47,7 @@ static int lenovo_input_mapping_tpkbd(struct hid_device *hdev,
 	return 0;
 }
 
-static int lenovo_input_mapping_cptkbd(struct hid_device *hdev,
-		struct hid_input *hi, struct hid_field *field,
-		struct hid_usage *usage, unsigned long **bit, int *max)
-{
-	/* HID_UP_LNVENDOR = USB, HID_UP_MSVENDOR = BT */
-	if ((usage->hid & HID_USAGE_PAGE) == HID_UP_MSVENDOR ||
-	    (usage->hid & HID_USAGE_PAGE) == HID_UP_LNVENDOR) {
-		switch (usage->hid & HID_USAGE) {
-		case 0x00f1: /* Fn-F4: Mic mute */
-			map_key_clear(KEY_MICMUTE);
-			return 1;
-		case 0x00f2: /* Fn-F5: Brightness down */
-			map_key_clear(KEY_BRIGHTNESSDOWN);
-			return 1;
-		case 0x00f3: /* Fn-F6: Brightness up */
-			map_key_clear(KEY_BRIGHTNESSUP);
-			return 1;
-		case 0x00f4: /* Fn-F7: External display (projector) */
-			map_key_clear(KEY_SWITCHVIDEOMODE);
-			return 1;
-		case 0x00f5: /* Fn-F8: Wireless */
-			map_key_clear(KEY_WLAN);
-			return 1;
-		case 0x00f6: /* Fn-F9: Control panel */
-			map_key_clear(KEY_CONFIG);
-			return 1;
-		case 0x00f8: /* Fn-F11: View open applications (3 boxes) */
-			map_key_clear(KEY_SCALE);
-			return 1;
-		case 0x00f9: /* Fn-F12: Open My computer (6 boxes) USB-only */
-			/* NB: This mapping is invented in raw_event below */
-			map_key_clear(KEY_FILE);
-			return 1;
-		case 0x00fa: /* Fn-Esc: Fn-lock toggle */
-			map_key_clear(KEY_FN_ESC);
-			return 1;
-		case 0x00fb: /* Middle mouse button (in native mode) */
-			map_key_clear(BTN_MIDDLE);
-			return 1;
-		}
-	}
-
-	/* Compatibility middle/wheel mappings should be ignored */
-	if (usage->hid == HID_GD_WHEEL)
-		return -1;
-	if ((usage->hid & HID_USAGE_PAGE) == HID_UP_BUTTON &&
-			(usage->hid & HID_USAGE) == 0x003)
-		return -1;
-	if ((usage->hid & HID_USAGE_PAGE) == HID_UP_CONSUMER &&
-			(usage->hid & HID_USAGE) == 0x238)
-		return -1;
-
-	/* Map wheel emulation reports: 0xffa1 = USB, 0xff10 = BT */
-	if ((usage->hid & HID_USAGE_PAGE) == 0xff100000 ||
-	    (usage->hid & HID_USAGE_PAGE) == 0xffa10000) {
-		field->flags |= HID_MAIN_ITEM_RELATIVE | HID_MAIN_ITEM_VARIABLE;
-		field->logical_minimum = -127;
-		field->logical_maximum = 127;
-
-		switch (usage->hid & HID_USAGE) {
-		case 0x0000:
-			hid_map_usage(hi, usage, bit, max, EV_REL, 0x06);
-			return 1;
-		case 0x0001:
-			hid_map_usage(hi, usage, bit, max, EV_REL, 0x08);
-			return 1;
-		default:
-			return -1;
-		}
-	}
-
-	return 0;
-}
-
-static int lenovo_input_mapping(struct hid_device *hdev,
-		struct hid_input *hi, struct hid_field *field,
-		struct hid_usage *usage, unsigned long **bit, int *max)
-{
-	switch (hdev->product) {
-	case USB_DEVICE_ID_LENOVO_TPKBD:
-		return lenovo_input_mapping_tpkbd(hdev, hi, field,
-							usage, bit, max);
-	case USB_DEVICE_ID_LENOVO_CUSBKBD:
-	case USB_DEVICE_ID_LENOVO_CBTKBD:
-		return lenovo_input_mapping_cptkbd(hdev, hi, field,
-							usage, bit, max);
-	default:
-		return 0;
-	}
-}
-
 #undef map_key_clear
-
-/* Send a config command to the keyboard */
-static int lenovo_send_cmd_cptkbd(struct hid_device *hdev,
-			unsigned char byte2, unsigned char byte3)
-{
-	int ret;
-	unsigned char buf[] = {0x18, byte2, byte3};
-
-	switch (hdev->product) {
-	case USB_DEVICE_ID_LENOVO_CUSBKBD:
-		ret = hid_hw_raw_request(hdev, 0x13, buf, sizeof(buf),
-					HID_FEATURE_REPORT, HID_REQ_SET_REPORT);
-		break;
-	case USB_DEVICE_ID_LENOVO_CBTKBD:
-		ret = hid_hw_output_report(hdev, buf, sizeof(buf));
-		break;
-	default:
-		ret = -EINVAL;
-		break;
-	}
-
-	return ret < 0 ? ret : 0; /* BT returns 0, USB returns sizeof(buf) */
-}
-
-static void lenovo_features_set_cptkbd(struct hid_device *hdev)
-{
-	int ret;
-	struct lenovo_drvdata_cptkbd *cptkbd_data = hid_get_drvdata(hdev);
-
-	ret = lenovo_send_cmd_cptkbd(hdev, 0x05, cptkbd_data->fn_lock);
-	ret = lenovo_send_cmd_cptkbd(hdev, 0x02, cptkbd_data->sensitivity);
-	if (ret)
-		hid_err(hdev, "Fn-lock setting failed: %d\n", ret);
-}
-
-static ssize_t attr_fn_lock_show_cptkbd(struct device *dev,
-		struct device_attribute *attr,
-		char *buf)
-{
-	struct hid_device *hdev = container_of(dev, struct hid_device, dev);
-	struct lenovo_drvdata_cptkbd *cptkbd_data = hid_get_drvdata(hdev);
-
-	return snprintf(buf, PAGE_SIZE, "%u\n", cptkbd_data->fn_lock);
-}
-
-static ssize_t attr_fn_lock_store_cptkbd(struct device *dev,
-		struct device_attribute *attr,
-		const char *buf,
-		size_t count)
-{
-	struct hid_device *hdev = container_of(dev, struct hid_device, dev);
-	struct lenovo_drvdata_cptkbd *cptkbd_data = hid_get_drvdata(hdev);
-	int value;
-
-	if (kstrtoint(buf, 10, &value))
-		return -EINVAL;
-	if (value < 0 || value > 1)
-		return -EINVAL;
-
-	cptkbd_data->fn_lock = !!value;
-	lenovo_features_set_cptkbd(hdev);
-
-	return count;
-}
-
-static ssize_t attr_sensitivity_show_cptkbd(struct device *dev,
-		struct device_attribute *attr,
-		char *buf)
-{
-	struct hid_device *hdev = container_of(dev, struct hid_device, dev);
-	struct lenovo_drvdata_cptkbd *cptkbd_data = hid_get_drvdata(hdev);
-
-	return snprintf(buf, PAGE_SIZE, "%u\n",
-		cptkbd_data->sensitivity);
-}
-
-static ssize_t attr_sensitivity_store_cptkbd(struct device *dev,
-		struct device_attribute *attr,
-		const char *buf,
-		size_t count)
-{
-	struct hid_device *hdev = container_of(dev, struct hid_device, dev);
-	struct lenovo_drvdata_cptkbd *cptkbd_data = hid_get_drvdata(hdev);
-	int value;
-
-	if (kstrtoint(buf, 10, &value) || value < 1 || value > 255)
-		return -EINVAL;
-
-	cptkbd_data->sensitivity = value;
-	lenovo_features_set_cptkbd(hdev);
-
-	return count;
-}
-
-
-static struct device_attribute dev_attr_fn_lock_cptkbd =
-	__ATTR(fn_lock, S_IWUSR | S_IRUGO,
-			attr_fn_lock_show_cptkbd,
-			attr_fn_lock_store_cptkbd);
-
-static struct device_attribute dev_attr_sensitivity_cptkbd =
-	__ATTR(sensitivity, S_IWUSR | S_IRUGO,
-			attr_sensitivity_show_cptkbd,
-			attr_sensitivity_store_cptkbd);
-
-
-static struct attribute *lenovo_attributes_cptkbd[] = {
-	&dev_attr_fn_lock_cptkbd.attr,
-	&dev_attr_sensitivity_cptkbd.attr,
-	NULL
-};
-
-static const struct attribute_group lenovo_attr_group_cptkbd = {
-	.attrs = lenovo_attributes_cptkbd,
-};
-
-static int lenovo_raw_event(struct hid_device *hdev,
-			struct hid_report *report, u8 *data, int size)
-{
-	/*
-	 * Compact USB keyboard's Fn-F12 report holds down many other keys, and
-	 * its own key is outside the usage page range. Remove extra
-	 * keypresses and remap to inside usage page.
-	 */
-	if (unlikely(hdev->product == USB_DEVICE_ID_LENOVO_CUSBKBD
-			&& size == 3
-			&& data[0] == 0x15
-			&& data[1] == 0x94
-			&& data[2] == 0x01)) {
-		data[1] = 0x00;
-		data[2] = 0x01;
-	}
-
-	return 0;
-}
 
 static int lenovo_features_set_tpkbd(struct hid_device *hdev)
 {
@@ -571,16 +336,6 @@ static int lenovo_probe_tpkbd(struct hid_device *hdev)
 	size_t name_sz = strlen(dev_name(dev)) + 16;
 	char *name_mute, *name_micmute;
 	int i;
-	int ret;
-
-	/*
-	 * Only register extra settings against subdevice where input_mapping
-	 * set drvdata to 1, i.e. the trackpoint.
-	 */
-	if (!hid_get_drvdata(hdev))
-		return 0;
-
-	hid_set_drvdata(hdev, NULL);
 
 	/* Validate required reports. */
 	for (i = 0; i < 4; i++) {
@@ -590,9 +345,10 @@ static int lenovo_probe_tpkbd(struct hid_device *hdev)
 	if (!hid_validate_values(hdev, HID_OUTPUT_REPORT, 3, 0, 2))
 		return -ENODEV;
 
-	ret = sysfs_create_group(&hdev->dev.kobj, &lenovo_attr_group_tpkbd);
-	if (ret)
-		hid_warn(hdev, "Could not create sysfs group: %d\n", ret);
+	if (sysfs_create_group(&hdev->dev.kobj,
+				&lenovo_attr_group_tpkbd)) {
+		hid_warn(hdev, "Could not create sysfs group\n");
+	}
 
 	data_pointer = devm_kzalloc(&hdev->dev,
 				    sizeof(struct lenovo_drvdata_tpkbd),
@@ -636,52 +392,6 @@ static int lenovo_probe_tpkbd(struct hid_device *hdev)
 	return 0;
 }
 
-static int lenovo_probe_cptkbd(struct hid_device *hdev)
-{
-	int ret;
-	struct lenovo_drvdata_cptkbd *cptkbd_data;
-
-	/* All the custom action happens on the USBMOUSE device for USB */
-	if (hdev->product == USB_DEVICE_ID_LENOVO_CUSBKBD
-			&& hdev->type != HID_TYPE_USBMOUSE) {
-		hid_dbg(hdev, "Ignoring keyboard half of device\n");
-		return 0;
-	}
-
-	cptkbd_data = devm_kzalloc(&hdev->dev,
-					sizeof(*cptkbd_data),
-					GFP_KERNEL);
-	if (cptkbd_data == NULL) {
-		hid_err(hdev, "can't alloc keyboard descriptor\n");
-		return -ENOMEM;
-	}
-	hid_set_drvdata(hdev, cptkbd_data);
-
-	/*
-	 * Tell the keyboard a driver understands it, and turn F7, F9, F11 into
-	 * regular keys
-	 */
-	ret = lenovo_send_cmd_cptkbd(hdev, 0x01, 0x03);
-	if (ret)
-		hid_warn(hdev, "Failed to switch F7/9/11 mode: %d\n", ret);
-
-	/* Switch middle button to native mode */
-	ret = lenovo_send_cmd_cptkbd(hdev, 0x09, 0x01);
-	if (ret)
-		hid_warn(hdev, "Failed to switch middle button: %d\n", ret);
-
-	/* Set keyboard settings to known state */
-	cptkbd_data->fn_lock = true;
-	cptkbd_data->sensitivity = 0x05;
-	lenovo_features_set_cptkbd(hdev);
-
-	ret = sysfs_create_group(&hdev->dev.kobj, &lenovo_attr_group_cptkbd);
-	if (ret)
-		hid_warn(hdev, "Could not create sysfs group: %d\n", ret);
-
-	return 0;
-}
-
 static int lenovo_probe(struct hid_device *hdev,
 		const struct hid_device_id *id)
 {
@@ -699,20 +409,12 @@ static int lenovo_probe(struct hid_device *hdev,
 		goto err;
 	}
 
-	switch (hdev->product) {
-	case USB_DEVICE_ID_LENOVO_TPKBD:
+	if (hid_get_drvdata(hdev)) {
+		hid_set_drvdata(hdev, NULL);
 		ret = lenovo_probe_tpkbd(hdev);
-		break;
-	case USB_DEVICE_ID_LENOVO_CUSBKBD:
-	case USB_DEVICE_ID_LENOVO_CBTKBD:
-		ret = lenovo_probe_cptkbd(hdev);
-		break;
-	default:
-		ret = 0;
-		break;
+		if (ret)
+			goto err_hid;
 	}
-	if (ret)
-		goto err_hid;
 
 	return 0;
 err_hid:
@@ -725,13 +427,6 @@ static void lenovo_remove_tpkbd(struct hid_device *hdev)
 {
 	struct lenovo_drvdata_tpkbd *data_pointer = hid_get_drvdata(hdev);
 
-	/*
-	 * Only the trackpoint half of the keyboard has drvdata and stuff that
-	 * needs unregistering.
-	 */
-	if (data_pointer == NULL)
-		return;
-
 	sysfs_remove_group(&hdev->dev.kobj,
 			&lenovo_attr_group_tpkbd);
 
@@ -741,31 +436,16 @@ static void lenovo_remove_tpkbd(struct hid_device *hdev)
 	hid_set_drvdata(hdev, NULL);
 }
 
-static void lenovo_remove_cptkbd(struct hid_device *hdev)
-{
-	sysfs_remove_group(&hdev->dev.kobj,
-			&lenovo_attr_group_cptkbd);
-}
-
 static void lenovo_remove(struct hid_device *hdev)
 {
-	switch (hdev->product) {
-	case USB_DEVICE_ID_LENOVO_TPKBD:
+	if (hid_get_drvdata(hdev))
 		lenovo_remove_tpkbd(hdev);
-		break;
-	case USB_DEVICE_ID_LENOVO_CUSBKBD:
-	case USB_DEVICE_ID_LENOVO_CBTKBD:
-		lenovo_remove_cptkbd(hdev);
-		break;
-	}
 
 	hid_hw_stop(hdev);
 }
 
 static const struct hid_device_id lenovo_devices[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LENOVO, USB_DEVICE_ID_LENOVO_TPKBD) },
-	{ HID_USB_DEVICE(USB_VENDOR_ID_LENOVO, USB_DEVICE_ID_LENOVO_CUSBKBD) },
-	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_LENOVO, USB_DEVICE_ID_LENOVO_CBTKBD) },
 	{ }
 };
 
@@ -774,10 +454,9 @@ MODULE_DEVICE_TABLE(hid, lenovo_devices);
 static struct hid_driver lenovo_driver = {
 	.name = "lenovo",
 	.id_table = lenovo_devices,
-	.input_mapping = lenovo_input_mapping,
+	.input_mapping = lenovo_input_mapping_tpkbd,
 	.probe = lenovo_probe,
 	.remove = lenovo_remove,
-	.raw_event = lenovo_raw_event,
 };
 module_hid_driver(lenovo_driver);
 

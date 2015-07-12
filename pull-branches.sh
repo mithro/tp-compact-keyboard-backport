@@ -3,7 +3,7 @@
 BASE_COMMIT=76c704048f5b1025e5fd21ece5407eff05c68931
 BASH="$BASH --norc --noprofile"
 
-BRANCHES=$(git branch --all | grep 'upstream/tp-' | sed -e's/^   //')
+BRANCHES=$(git branch --all | grep 'upstream/tp-' | sed -e's/^..//')
 
 git fetch upstream
 
